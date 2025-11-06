@@ -1,7 +1,7 @@
 [package]
-name = "eframe_template"
+name = "galileo_vt_styler"
 version = "0.1.0"
-authors = ["Emil Ernerfeldt <emil.ernerfeldt@gmail.com>"]
+authors = ["maxim@gritsenko.biz"]
 edition = "2021"
 include = ["LICENSE-APACHE", "LICENSE-MIT", "**/*.rs", "Cargo.toml"]
 rust-version = "1.76"
@@ -11,17 +11,24 @@ all-features = true
 targets = ["x86_64-unknown-linux-gnu", "wasm32-unknown-unknown"]
 
 [dependencies]
-egui = "0.29"
-eframe = { version = "0.29", default-features = false, features = [
-    "accesskit",     # Make egui compatible with screen readers. NOTE: adds a lot of dependencies.
-    "default_fonts", # Embed the default egui fonts.
-    "glow",          # Use the glow rendering backend. Alternative: "wgpu".
-    "persistence",   # Enable restoring app state when restarting the app.
+egui = { version = "0.32" }
+eframe = { version = "0.32", default-features = false, features = [
+    # "accesskit",     # Make egui compatible with screen readers. NOTE: adds a lot of dependencies.
+    # "default_fonts", # Embed the default egui fonts.
+    # "wgpu",          # Use the glow rendering backend. Alternative: "wgpu".
+    # "persistence",   # Enable restoring app state when restarting the app.
 ] }
 log = "0.4"
+galileo = { path = "../galileo/galileo" }
+galileo-egui = { path = "../galileo/galileo-egui" }
+galileo-types = { path = "../galileo/galileo-types" }
+parking_lot = "0.12"
+tokio = { version = "1", features = ["rt"] }
 
 # You only need serde if you want app persistence:
 serde = { version = "1", features = ["derive"] }
+serde_json = "1.0.135"
+itertools = "0.14.0"
 
 # native:
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]

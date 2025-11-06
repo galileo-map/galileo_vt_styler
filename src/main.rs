@@ -4,11 +4,26 @@
 // When compiling natively:
 #[cfg(not(target_arch = "wasm32"))]
 fn main() -> eframe::Result {
+    use std::time::Duration;
+
+    use tokio::runtime::Runtime;
+
     env_logger::init(); // Log to stderr (if you run with `RUST_LOG=debug`).
+
+    let rt = Runtime::new().expect("Unable to create Runtime");
+    let _enter = rt.enter();
+
+    std::thread::spawn(move || {
+        rt.block_on(async {
+            loop {
+                tokio::time::sleep(Duration::from_secs(3600)).await;
+            }
+        })
+    });
 
     let native_options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size([400.0, 300.0])
+            .with_inner_size([1000.0, 1000.0])
             .with_min_inner_size([300.0, 220.0])
             .with_icon(
                 // NOTE: Adding an icon is optional
@@ -17,10 +32,11 @@ fn main() -> eframe::Result {
             ),
         ..Default::default()
     };
+
     eframe::run_native(
         "eframe template",
         native_options,
-        Box::new(|cc| Ok(Box::new(eframe_template::TemplateApp::new(cc)))),
+        Box::new(|cc| Ok(Box::new(galileo_vt_styler::GalileoApp::new(cc)))),
     )
 }
 
@@ -50,7 +66,7 @@ fn main() {
             .start(
                 canvas,
                 web_options,
-                Box::new(|cc| Ok(Box::new(eframe_template::TemplateApp::new(cc)))),
+                Box::new(|cc| Ok(Box::new(galileo_vt_styler::GalileoApp::new(cc)))),
             )
             .await;
 
