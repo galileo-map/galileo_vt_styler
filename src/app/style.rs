@@ -1,16 +1,14 @@
 use std::{
-    collections::HashMap,
     fmt::Formatter,
     time::{Duration, Instant},
 };
 
 use egui::{CollapsingHeader, Color32, ComboBox, DragValue};
 use galileo::{
-    layer::vector_tile_layer::style::{
-        StyleRule, VectorTileLineSymbol, VectorTilePointSymbol, VectorTilePolygonSymbol,
-        VectorTileSymbol,
-    },
-    Color,
+    Color, layer::vector_tile_layer::style::{
+        PropertyFilter, PropertyFilterOperator, StyleRule, VectorTileLabelSymbol,
+        VectorTileLineSymbol, VectorTilePointSymbol, VectorTilePolygonSymbol, VectorTileSymbol,
+    }, render::text::TextStyle
 };
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
@@ -55,6 +53,7 @@ impl StyleWindow {
             .resizable([false, true])
             .default_width(300.0)
             .default_height(600.0)
+            .max_width(300.0)
             .scroll([false, true])
             .show(ctx, |ui| self.ui(ctx, ui));
 
@@ -72,7 +71,61 @@ impl StyleWindow {
         }
     }
 
+    /// Load a new style, replacing the current one
+    pub fn load_style(&mut self, style: VectorTileStyle, ctx: &egui::Context) {
+        let mut last_id = 0;
+        self.rules = style
+            .rules
+            .iter()
+            .map(|style_rule| {
+                last_id += 1;
+                Rule::new(style_rule, last_id)
+            })
+            .collect();
+        self.last_rule_id = last_id;
+        self.background_color = to_egui_color(style.background);
+        self.mark_changed(ctx);
+    }
+
     fn ui(&mut self, ctx: &egui::Context, ui: &mut egui::Ui) {
+        // Load style button
+        #[cfg(not(target_arch = "wasm32"))]
+        if ui.button("Load MapTiler Style...").clicked() {
+            match native_dialog::FileDialog::new()
+                .add_filter("JSON Files", &["json"])
+                .show_open_single_file()
+            {
+                Ok(Some(path)) => match std::fs::read_to_string(&path) {
+                    Ok(json_content) => {
+                        match serde_json::from_str::<crate::maptiler_style::Style>(&json_content) {
+                            Ok(maptiler_style) => {
+                                let galileo_style =
+                                    crate::maptiler_style::convert_maptiler_to_galileo(
+                                        &maptiler_style,
+                                    );
+                                self.load_style(galileo_style, ctx);
+                                log::info!("Successfully loaded MapTiler style from {:?}", path);
+                            }
+                            Err(e) => {
+                                log::error!("Failed to parse MapTiler style: {}", e);
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        log::error!("Failed to read file: {}", e);
+                    }
+                },
+                Ok(None) => {
+                    // User cancelled the dialog
+                }
+                Err(e) => {
+                    log::error!("Failed to open file dialog: {}", e);
+                }
+            }
+        }
+
+        ui.separator();
+
         ui.horizontal(|ui| {
             ui.label("Background");
             if ui
@@ -170,6 +223,9 @@ struct Rule {
     size: f64,
     symbol_type: SymbolType,
     action: RuleAction,
+    halo_width: f32,
+    halo_color: Color32,
+    pattern: String,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -187,6 +243,7 @@ enum SymbolType {
     Point,
     Line,
     Polygon,
+    Label,
 }
 
 impl std::fmt::Display for SymbolType {
@@ -196,6 +253,7 @@ impl std::fmt::Display for SymbolType {
             SymbolType::Point => write!(f, "point"),
             SymbolType::Line => write!(f, "line"),
             SymbolType::Polygon => write!(f, "polygon"),
+            SymbolType::Label => write!(f, "label"),
         }
     }
 }
@@ -205,13 +263,28 @@ impl Rule {
         let filter = style_rule
             .properties
             .iter()
-            .map(|(key, value)| format!("{key} == {value}"))
+            .map(|filter| format!("{} {}", filter.property_name, filter.operator.to_string(),))
             .join(" && ");
-        let (color, size, symbol_type) = match style_rule.symbol {
+
+        let (color, size, symbol_type) = match &style_rule.symbol {
             VectorTileSymbol::Point(s) => (to_egui_color(s.color), s.size, SymbolType::Point),
             VectorTileSymbol::Line(s) => (to_egui_color(s.stroke_color), s.width, SymbolType::Line),
             VectorTileSymbol::Polygon(s) => (to_egui_color(s.fill_color), 0.0, SymbolType::Polygon),
+            VectorTileSymbol::Label(s) => (
+                to_egui_color(s.text_style.font_color),
+                s.text_style.font_size as f64,
+                SymbolType::Label,
+            ),
             _ => (to_egui_color(Color::TRANSPARENT), 0.0, SymbolType::None),
+        };
+
+        let (halo_color, halo_width, pattern) = match &style_rule.symbol {
+            VectorTileSymbol::Label(s) => (
+                to_egui_color(s.text_style.outline_color),
+                s.text_style.outline_width,
+                s.pattern.clone(),
+            ),
+            _ => (Color32::WHITE, 2.0, String::new()),
         };
 
         Self {
@@ -222,6 +295,9 @@ impl Rule {
             size,
             symbol_type,
             action: RuleAction::None,
+            halo_color,
+            halo_width,
+            pattern,
         }
     }
 
@@ -234,6 +310,9 @@ impl Rule {
             size: 1.0,
             symbol_type: SymbolType::None,
             action: RuleAction::None,
+            halo_color: to_egui_color(Color::WHITE),
+            halo_width: 2.0,
+            pattern: String::new(),
         }
     }
 
@@ -255,6 +334,29 @@ impl Rule {
             SymbolType::Polygon => VectorTileSymbol::Polygon(VectorTilePolygonSymbol {
                 fill_color: to_galileo_color(self.color),
             }),
+            SymbolType::Label => {
+                VectorTileSymbol::Label(VectorTileLabelSymbol {
+                text_style: TextStyle {
+                    font_family: vec![
+                        "Noto Sans".to_string(),
+                        "Noto Sans CJK JP".to_string(),
+                        "Noto Sans CJK KR".to_string(),
+                        "Noto Sans CJK SC".to_string(),
+                        "Noto Sans CJK TC".to_string(),
+                        "Noto Sans KR".to_string(),
+                        "Noto Sans JP".to_string(),
+                    ],
+                    font_size: self.size as f32,
+                    font_color: to_galileo_color(self.color),
+                    horizontal_alignment: Default::default(),
+                    vertical_alignment: Default::default(),
+                    weight: galileo::render::text::FontWeight::BOLD,
+                    style: Default::default(),
+                    outline_width: self.halo_width,
+                    outline_color: to_galileo_color(self.halo_color),
+                },
+                pattern: self.pattern.clone(),
+            })},
         };
 
         StyleRule {
@@ -264,15 +366,50 @@ impl Rule {
         }
     }
 
-    fn parse_filter(&self) -> Option<HashMap<String, String>> {
+    fn parse_filter(&self) -> Option<Vec<PropertyFilter>> {
         let split = self.filter.split("&&");
-        let mut properties = HashMap::new();
+        let mut properties = vec![];
+        let operators = [
+            "==",
+            "!=",
+            ">",
+            "<",
+            ">=",
+            "<=",
+            " not in ",
+            " in ",
+            "exist",
+            "not exist",
+        ];
         for block in split {
-            let blocks: Vec<&str> = block.split("==").map(|v| v.trim()).collect();
-            if blocks.len() != 2 {
-                return None;
+            for operator in operators {
+                if block.contains(operator) {
+                    let blocks: Vec<&str> = block.split(operator).map(|v| v.trim()).collect();
+                    if blocks.len() != 2 {
+                        eprintln!("Invalid filter block: {}", block);
+                        return None;
+                    }
+
+                    let operator = operator.trim();
+                    let value = if operator == "in" || operator == "not in" {
+                        blocks[1].trim().trim_matches(&['[', ']'][..])
+                    } else {
+                        blocks[1]
+                    };
+
+                    let Some(operator) = PropertyFilterOperator::from_str(operator, value) else {
+                        eprintln!("Invalid operator in filter block: {}", block);
+                        return None;
+                    };
+
+                    properties.push(PropertyFilter {
+                        property_name: blocks[0].to_string(),
+                        operator,
+                    });
+
+                    break;
+                }
             }
-            properties.insert(blocks[0].to_string(), blocks[1].to_string());
         }
 
         if properties.is_empty() {
@@ -368,6 +505,12 @@ impl Rule {
     }
 
     fn header(&self) -> String {
-        format!("{} ({})", self.layer_name, self.filter)
+        const MAX_LEN: usize = 60;
+        let text = format!("{} ({})", self.layer_name, self.filter);
+        if text.len() > MAX_LEN {
+            format!("{}...", &text[..MAX_LEN])
+        } else {
+            text
+        }
     }
 }

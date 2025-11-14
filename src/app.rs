@@ -2,15 +2,11 @@ use std::sync::Arc;
 
 use eframe::Frame;
 use galileo::{
-    control::{EventPropagation, MouseButton, UserEvent, UserEventHandler},
-    layer::{
-        vector_tile_layer::{style::VectorTileStyle, VectorTileLayerBuilder},
-        VectorTileLayer,
-    },
-    tile_schema::{TileIndex, VerticalDirection},
-    Lod, Map, MapView, TileSchema,
+    Lod, Map, MapView, TileSchema, control::{EventPropagation, MouseButton, UserEvent, UserEventHandler}, layer::{
+        VectorTileLayer, vector_tile_layer::{VectorTileLayerBuilder, style::VectorTileStyle}
+    }, render::text::{RustybuzzRasterizer, text_service::TextService}, tile_schema::{TileIndex, VerticalDirection}
 };
-use galileo_egui::{EguiMap, EguiMapOptions, EguiMapState};
+use galileo_egui::{EguiMap, EguiMapState};
 use galileo_types::{
     cartesian::{Point2, Rect},
     geo::Crs,
@@ -39,12 +35,15 @@ impl GalileoApp {
         // This is also where you can customize the look and feel of egui using
         // `cc.egui_ctx.set_visuals` and `cc.egui_ctx.set_fonts`.
 
+        let rasterizer = RustybuzzRasterizer::default();
+        TextService::initialize(rasterizer).load_fonts("assets/fonts");
+
         let state: Option<AppState> = cc
             .storage
             .and_then(|storage| eframe::get_value(storage, eframe::APP_KEY));
         let style_window = match state {
             Some(v) => v.style_window,
-            None => StyleWindow::new(get_layer_style().unwrap()),
+            None => StyleWindow::new(get_layer_style().unwrap_or_default()),
         };
 
         let map_view = MapView::new(&latlon!(55.0, 37.0), 20_000.0);
@@ -53,7 +52,8 @@ impl GalileoApp {
 
         let layer = VectorTileLayerBuilder::new_rest(move |&index: &TileIndex| {
             format!(
-                "https://api.maptiler.com/tiles/v3-openmaptiles/{z}/{x}/{y}.pbf?key={api_key}",
+                //"https://api.maptiler.com/tiles/v3-openmaptiles/{z}/{x}/{y}.pbf?key={api_key}",
+                "https://api.maptiler.com/tiles/v3/{z}/{x}/{y}.pbf?key={api_key}",
                 z = index.z,
                 x = index.x,
                 y = index.y
@@ -101,7 +101,13 @@ impl GalileoApp {
 
         let handler: Box<dyn UserEventHandler> = Box::new(handler);
         GalileoApp {
-            map_state: EguiMapState::new(map, ctx, render_state, [handler], galileo_egui::EguiMapOptions::default()),
+            map_state: EguiMapState::new(
+                map,
+                ctx,
+                render_state,
+                [handler],
+                galileo_egui::EguiMapOptions::default(),
+            ),
             vt_layer: layer,
             style_window,
         }
@@ -151,9 +157,9 @@ impl eframe::App for GalileoApp {
     }
 
     /// Called each time the UI needs repainting, which may be many times per second.
-    fn update(&mut self, ctx: &egui::Context, frame: &mut Frame) {
+    fn update(&mut self, ctx: &egui::Context, _frame: &mut Frame) {
         egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
-            egui::menu::bar(ui, |ui| {
+            egui::MenuBar::new().ui(ui, |ui| {
                 let is_web = cfg!(target_arch = "wasm32");
                 if !is_web {
                     ui.menu_button("File", |ui| {
