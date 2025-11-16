@@ -48,7 +48,9 @@ impl GalileoApp {
 
         let map_view = MapView::new(&latlon!(55.0, 37.0), 20_000.0);
 
-        let api_key = "yovW4kTYgmIPv7WyXTYt";
+        let Ok(api_key) = std::env::var("VT_API_KEY") else {
+            panic!("MapTiler VT_API_KEY environment variable not set");
+        };
 
         let layer = VectorTileLayerBuilder::new_rest(move |&index: &TileIndex| {
             format!(

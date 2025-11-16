@@ -14,3 +14,4 @@ target_wasm
 
 .tile_cache
 .vscode
+.env
